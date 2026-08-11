@@ -1,0 +1,99 @@
+name: EKS - Teardown
+
+on:
+  workflow_dispatch:
+    inputs:
+      cluster_name:
+        description: "삭제할 EKS 클러스터 이름"
+        required: true
+        default: "devtrouble-ai"
+      region:
+        description: "AWS 리전"
+        required: true
+        default: "ap-northeast-2"
+      confirm:
+        description: '정말로 삭제하려면 정확히 "delete"라고 입력하세요'
+        required: true
+
+jobs:
+  teardown:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Confirm
+        run: |
+          if [ "${{ inputs.confirm }}" != "delete" ]; then
+            echo "confirm 입력값이 'delete'가 아니라서 중단합니다. (오타 방지용 안전장치)"
+            exit 1
+          fi
+
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ inputs.region }}
+
+      - name: Install eksctl
+        run: |
+          curl -sL "https://github.com/eksctl-io/eksctl/releases/latest/download/eksctl_Linux_amd64.tar.gz" | tar xz -C /tmp
+          sudo mv /tmp/eksctl /usr/local/bin/
+
+      - name: Install kubectl
+        uses: azure/setup-kubectl@v4
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+
+      - name: Update kubeconfig
+        run: aws eks update-kubeconfig --name "${{ inputs.cluster_name }}" --region "${{ inputs.region }}"
+        continue-on-error: true # 클러스터가 이미 없거나 접속이 안 돼도 아래 단계는 계속 시도한다
+
+      # 순서가 중요하다: Ingress(ALB)/PVC(EBS)처럼 "클러스터 밖" AWS 리소스를 만드는
+      # 것들을 먼저 지워야, eksctl이 클러스터를 지울 때 이것들이 고아 상태로 남지 않는다.
+      - name: Delete Helm release (removes Ingress/ALB first)
+        run: helm uninstall devtrouble-ai || echo "release가 이미 없으면 무시"
+        continue-on-error: true
+
+      - name: Delete any remaining Ingress/PVC
+        run: |
+          kubectl delete ingress --all -A --timeout=60s || true
+          kubectl delete pvc --all -A --timeout=60s || true
+        continue-on-error: true
+
+      - name: Wait for ALB/EBS cleanup to propagate
+        run: sleep 90
+
+      - name: Delete EKS cluster (this also removes the VPC/NAT Gateway/nodes)
+        run: |
+          eksctl delete cluster --name "${{ inputs.cluster_name }}" --region "${{ inputs.region }}" --wait
+
+      # eksctl delete cluster로도 안 지워지는 경우가 실제로 있다(문서 참고). 자동으로
+      # 지우진 않고, 남아있는지 "찾아서 보여주기"만 한다 — 사용자가 직접 최종 확인하고
+      # 지우는 게 실수로 필요한 리소스를 지우는 것보다 안전하기 때문이다.
+      - name: Check for leftover billable resources
+        run: |
+          echo "## ⚠️ 아래 목록에 뭔가 남아있으면 직접 확인 후 수동으로 지워주세요" >> $GITHUB_STEP_SUMMARY
+
+          echo "### 로드밸런서 (ALB/ELB)" >> $GITHUB_STEP_SUMMARY
+          aws elbv2 describe-load-balancers --region "${{ inputs.region }}" \
+            --query "LoadBalancers[].[LoadBalancerName,LoadBalancerArn]" --output text >> $GITHUB_STEP_SUMMARY || true
+
+          echo "### NAT 게이트웨이 (가장 비용이 잘 새는 부분)" >> $GITHUB_STEP_SUMMARY
+          aws ec2 describe-nat-gateways --region "${{ inputs.region }}" \
+            --filter "Name=state,Values=available" \
+            --query "NatGateways[].[NatGatewayId,VpcId]" --output text >> $GITHUB_STEP_SUMMARY || true
+
+          echo "### Elastic IP (연결 안 된 채로 남아있어도 과금됨)" >> $GITHUB_STEP_SUMMARY
+          aws ec2 describe-addresses --region "${{ inputs.region }}" \
+            --query "Addresses[].[PublicIp,AssociationId]" --output text >> $GITHUB_STEP_SUMMARY || true
+
+          echo "### EBS 볼륨" >> $GITHUB_STEP_SUMMARY
+          aws ec2 describe-volumes --region "${{ inputs.region }}" \
+            --filters "Name=status,Values=available" \
+            --query "Volumes[].[VolumeId,Size]" --output text >> $GITHUB_STEP_SUMMARY || true
+
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "위 네 개 목록이 전부 비어있으면 정상적으로 다 지워진 것입니다." >> $GITHUB_STEP_SUMMARY
+          echo "AWS 콘솔에서도 한 번 더 눈으로 확인하시길 권장합니다." >> $GITHUB_STEP_SUMMARY

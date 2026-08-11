@@ -1,0 +1,106 @@
+name: EKS - Create Cluster
+
+# 수동으로만 실행한다 (push 트리거 없음) — 실수로 클러스터가 새로 만들어지면 비용이
+# 계속 나가므로, 반드시 사람이 Actions 탭에서 "Run workflow" 버튼을 눌러야만 시작된다.
+on:
+  workflow_dispatch:
+    inputs:
+      cluster_name:
+        description: "EKS 클러스터 이름"
+        required: true
+        default: "devtrouble-ai"
+      region:
+        description: "AWS 리전"
+        required: true
+        default: "ap-northeast-2"
+      node_type:
+        description: "워커 노드 EC2 인스턴스 타입 (비용 절감하려면 t3.medium 권장)"
+        required: true
+        default: "t3.medium"
+      node_count:
+        description: "워커 노드 개수"
+        required: true
+        default: "2"
+
+jobs:
+  create-cluster:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ inputs.region }}
+
+      - name: Install eksctl
+        run: |
+          curl -sL "https://github.com/eksctl-io/eksctl/releases/latest/download/eksctl_Linux_amd64.tar.gz" | tar xz -C /tmp
+          sudo mv /tmp/eksctl /usr/local/bin/
+
+      - name: Install kubectl
+        uses: azure/setup-kubectl@v4
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+
+      # 이 한 줄이 사실상 이 워크플로의 핵심이다 — VPC/서브넷/노드그룹까지
+      # eksctl이 CloudFormation으로 알아서 다 만들어준다. 보통 15~20분 걸린다.
+      - name: Create EKS cluster
+        run: |
+          eksctl create cluster \
+            --name "${{ inputs.cluster_name }}" \
+            --region "${{ inputs.region }}" \
+            --node-type "${{ inputs.node_type }}" \
+            --nodes "${{ inputs.node_count }}" \
+            --nodes-min 1 \
+            --nodes-max "${{ inputs.node_count }}" \
+            --with-oidc \
+            --managed
+
+      # AWS Load Balancer Controller가 실제 ALB를 만들려면 AWS API 호출 권한이
+      # 필요하다. IAM 역할을 만들고, 그 역할을 K8s ServiceAccount와 연결한다
+      # (IRSA: IAM Roles for Service Accounts).
+      - name: Create IAM policy for AWS Load Balancer Controller
+        run: |
+          curl -o /tmp/iam-policy.json https://raw.githubusercontent.com/kubernetes-sigs/aws-load-balancer-controller/main/docs/install/iam_policy.json
+          aws iam create-policy \
+            --policy-name AWSLoadBalancerControllerIAMPolicy-${{ inputs.cluster_name }} \
+            --policy-document file:///tmp/iam-policy.json \
+            || echo "정책이 이미 있으면 무시하고 계속 진행 (재실행 시 대비)"
+
+      - name: Create IAM service account for AWS Load Balancer Controller
+        run: |
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          eksctl create iamserviceaccount \
+            --cluster "${{ inputs.cluster_name }}" \
+            --region "${{ inputs.region }}" \
+            --namespace kube-system \
+            --name aws-load-balancer-controller \
+            --attach-policy-arn "arn:aws:iam::${ACCOUNT_ID}:policy/AWSLoadBalancerControllerIAMPolicy-${{ inputs.cluster_name }}" \
+            --approve \
+            --override-existing-serviceaccounts
+
+      - name: Install AWS Load Balancer Controller (via Helm)
+        run: |
+          helm repo add eks https://aws.github.io/eks-charts
+          helm repo update
+          helm upgrade --install aws-load-balancer-controller eks/aws-load-balancer-controller \
+            -n kube-system \
+            --set clusterName="${{ inputs.cluster_name }}" \
+            --set serviceAccount.create=false \
+            --set serviceAccount.name=aws-load-balancer-controller
+
+      - name: Verify
+        run: |
+          kubectl get nodes
+          kubectl get deployment -n kube-system aws-load-balancer-controller
+
+      - name: Summary
+        run: |
+          echo "## EKS 클러스터 생성 완료" >> $GITHUB_STEP_SUMMARY
+          echo "- 클러스터: ${{ inputs.cluster_name }} (${{ inputs.region }})" >> $GITHUB_STEP_SUMMARY
+          echo "- 다음 단계: 'EKS - Deploy' 워크플로를 실행해 이미지 빌드+배포" >> $GITHUB_STEP_SUMMARY
+          echo "- ⚠️ 다 쓰셨으면 'EKS - Teardown' 워크플로를 꼭 실행해서 비용이 계속 나가지 않게 하세요" >> $GITHUB_STEP_SUMMARY

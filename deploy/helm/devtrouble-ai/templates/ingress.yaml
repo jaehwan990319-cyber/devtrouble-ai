@@ -1,0 +1,48 @@
+{{- if .Values.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "devtrouble-ai.fullname" . }}
+  labels:
+    {{- include "devtrouble-ai.labels" . | nindent 4 }}
+  annotations:
+    kubernetes.io/ingress.class: {{ .Values.ingress.className }}
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    {{- if .Values.ingress.certificateArn }}
+    alb.ingress.kubernetes.io/certificate-arn: {{ .Values.ingress.certificateArn }}
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP":80},{"HTTPS":443}]'
+    alb.ingress.kubernetes.io/ssl-redirect: "443"
+    {{- else }}
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP":80}]'
+    {{- end }}
+spec:
+  {{- if .Values.ingress.host }}
+  rules:
+    - host: {{ .Values.ingress.host }}
+      http:
+        paths:
+  {{- else }}
+  rules:
+    - http:
+        paths:
+  {{- end }}
+          # 프론트엔드(React)가 상대경로 /api/v1/...로 호출하므로(VITE_API_BASE_URL=/api/v1),
+          # ALB가 /api는 백엔드로, 나머지는 전부 프론트엔드로 갈라준다. 그래서 프론트엔드
+          # 컨테이너 안 nginx.conf의 /api/ 프록시 규칙은 K8s에서는 실질적으로 안 타게 된다
+          # (ALB에서 먼저 걸러지므로) — 지워도 되지만, 남겨둬도 무해하다.
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "devtrouble-ai.fullname" . }}-api
+                port:
+                  number: 80
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "devtrouble-ai.fullname" . }}-frontend
+                port:
+                  number: 80
+{{- end }}

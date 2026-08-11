@@ -1,0 +1,98 @@
+name: EKS - Deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      cluster_name:
+        description: "EKS 클러스터 이름"
+        required: true
+        default: "devtrouble-ai"
+      region:
+        description: "AWS 리전"
+        required: true
+        default: "ap-northeast-2"
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ inputs.region }}
+
+      - name: Login to ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      # 첫 배포면 저장소가 없어서 push가 실패하므로, 없을 때만 만든다.
+      - name: Ensure ECR repositories exist
+        run: |
+          for repo in devtrouble-ai-backend devtrouble-ai-frontend; do
+            aws ecr describe-repositories --repository-names "$repo" --region "${{ inputs.region }}" >/dev/null 2>&1 \
+              || aws ecr create-repository --repository-name "$repo" --region "${{ inputs.region }}"
+          done
+
+      - name: Build and push backend image
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+        run: |
+          docker build -t "$REGISTRY/devtrouble-ai-backend:${{ github.sha }}" \
+            -t "$REGISTRY/devtrouble-ai-backend:latest" \
+            ./devtrouble-ai-backend
+          docker push "$REGISTRY/devtrouble-ai-backend:${{ github.sha }}"
+          docker push "$REGISTRY/devtrouble-ai-backend:latest"
+
+      - name: Build and push frontend image
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+        run: |
+          docker build -t "$REGISTRY/devtrouble-ai-frontend:${{ github.sha }}" \
+            -t "$REGISTRY/devtrouble-ai-frontend:latest" \
+            ./devtrouble-ai-frontend
+          docker push "$REGISTRY/devtrouble-ai-frontend:${{ github.sha }}"
+          docker push "$REGISTRY/devtrouble-ai-frontend:latest"
+
+      - name: Install kubectl
+        uses: azure/setup-kubectl@v4
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+
+      - name: Update kubeconfig
+        run: aws eks update-kubeconfig --name "${{ inputs.cluster_name }}" --region "${{ inputs.region }}"
+
+      # DB 비밀번호/JWT 키 등은 Helm values(Git에 커밋되는 파일)가 아니라 여기서
+      # GitHub Secrets로부터 매 배포마다 Secret을 새로 만들어 갱신한다. `--dry-run=client
+      # -o yaml | kubectl apply -f -` 패턴을 쓰면 이미 있어도 에러 없이 업데이트된다.
+      - name: Create/update K8s secret from GitHub Secrets
+        run: |
+          kubectl create secret generic devtrouble-ai-secrets \
+            --from-literal=DATABASE_URL="${{ secrets.DATABASE_URL }}" \
+            --from-literal=REDIS_URL="${{ secrets.REDIS_URL }}" \
+            --from-literal=CELERY_BROKER_URL="${{ secrets.CELERY_BROKER_URL }}" \
+            --from-literal=CELERY_RESULT_BACKEND="${{ secrets.CELERY_RESULT_BACKEND }}" \
+            --from-literal=JWT_SECRET_KEY="${{ secrets.JWT_SECRET_KEY }}" \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+      - name: Deploy with Helm
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+        run: |
+          helm upgrade --install devtrouble-ai ./deploy/helm/devtrouble-ai \
+            --set image.registry="$REGISTRY" \
+            --set image.tag="${{ github.sha }}" \
+            --wait --timeout 10m
+
+      - name: Show status
+        run: |
+          kubectl get pods -l app.kubernetes.io/instance=devtrouble-ai
+          echo "## 배포 완료" >> $GITHUB_STEP_SUMMARY
+          echo "ALB 주소가 뜨는 데 몇 분 걸릴 수 있습니다. 아래 명령으로 확인하세요:" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "kubectl get ingress devtrouble-ai" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY

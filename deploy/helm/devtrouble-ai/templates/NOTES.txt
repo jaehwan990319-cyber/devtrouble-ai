@@ -1,0 +1,10 @@
+DevTrouble AI가 배포됐습니다 (release: {{ .Release.Name }}).
+
+ALB 주소 확인 (DNS 전파에 몇 분 걸릴 수 있음):
+  kubectl get ingress {{ include "devtrouble-ai.fullname" . }} -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'
+
+파드 상태 확인:
+  kubectl get pods -l app.kubernetes.io/instance={{ .Release.Name }}
+
+마이그레이션 Job 로그 확인 (실패했다면 여기부터 볼 것):
+  kubectl logs job/{{ include "devtrouble-ai.fullname" . }}-migrate-{{ .Release.Revision }}

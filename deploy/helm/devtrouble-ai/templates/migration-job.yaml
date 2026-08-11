@@ -1,0 +1,30 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "devtrouble-ai.fullname" . }}-migrate-{{ .Release.Revision }}
+  labels:
+    {{- include "devtrouble-ai.labels" . | nindent 4 }}
+    app.kubernetes.io/component: migration
+  annotations:
+    # helm upgrade/install 시 API 파드를 새로 띄우기 전에 이 Job이 먼저 끝나야 한다.
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "0"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 2
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: migrate
+          image: "{{ .Values.image.registry }}/devtrouble-ai-backend:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["alembic", "upgrade", "head"]
+          # ConfigMap은 참조하지 않는다 — alembic은 DATABASE_URL(Secret에 있음)만 있으면
+          # 되고, ConfigMap의 나머지 값(AI_PROVIDER 등)은 pydantic Settings에 기본값이
+          # 있어 없어도 무방하다. 이렇게 하면 "Helm hook은 일반 템플릿보다 먼저 실행되므로
+          # 아직 존재하지 않는 ConfigMap을 참조하게 되는" 순서 문제 자체가 생기지 않는다.
+          # Secret은 이 chart가 아니라 배포 워크플로가 미리 만들어두므로 hook에서도 항상 존재한다.
+          envFrom:
+            - secretRef:
+                name: {{ .Values.secretName }}
