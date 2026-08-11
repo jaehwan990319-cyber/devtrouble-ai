@@ -66,27 +66,58 @@ jobs:
       - name: Update kubeconfig
         run: aws eks update-kubeconfig --name "${{ inputs.cluster_name }}" --region "${{ inputs.region }}"
 
-      # DB 비밀번호/JWT 키 등은 Helm values(Git에 커밋되는 파일)가 아니라 여기서
-      # GitHub Secrets로부터 매 배포마다 Secret을 새로 만들어 갱신한다. `--dry-run=client
-      # -o yaml | kubectl apply -f -` 패턴을 쓰면 이미 있어도 에러 없이 업데이트된다.
-      - name: Create/update K8s secret from GitHub Secrets
+      # DB 비밀번호/JWT 키 등은 Helm chart의 templates/secret.yaml이 관리한다 (values의
+      # secrets.* 아래로 들어감). kubectl로 별도 Secret을 먼저 만들지 않는다 — 그렇게 하면
+      # helm이 "이미 있는데 내가 관리하는 게 아닌" 리소스를 만나 소유권 충돌 에러를 낸다.
+      # 대신 GitHub Secrets를 임시 values 파일로 안전하게 변환해 helm에 -f로 넘긴다
+      # (--set은 콤마/특수문자가 든 비밀번호에서 깨지기 쉬워 파일 방식이 더 안전하다).
+      - name: Build secret values file from GitHub Secrets
         run: |
-          kubectl create secret generic devtrouble-ai-secrets \
-            --from-literal=DATABASE_URL="${{ secrets.DATABASE_URL }}" \
-            --from-literal=REDIS_URL="${{ secrets.REDIS_URL }}" \
-            --from-literal=CELERY_BROKER_URL="${{ secrets.CELERY_BROKER_URL }}" \
-            --from-literal=CELERY_RESULT_BACKEND="${{ secrets.CELERY_RESULT_BACKEND }}" \
-            --from-literal=JWT_SECRET_KEY="${{ secrets.JWT_SECRET_KEY }}" \
-            --dry-run=client -o yaml | kubectl apply -f -
+          python3 - <<'PYEOF'
+          import yaml
+          import os
+
+          secrets = {
+              "jwtSecretKey": os.environ["JWT_SECRET_KEY"],
+              "databaseUrl": os.environ["DATABASE_URL"],
+              "redisUrl": os.environ["REDIS_URL"],
+              "celeryBrokerUrl": os.environ["CELERY_BROKER_URL"],
+              "celeryResultBackendUrl": os.environ["CELERY_RESULT_BACKEND"],
+              "openaiApiKey": os.environ.get("OPENAI_API_KEY", ""),
+              "watsonxApiKey": os.environ.get("WATSONX_API_KEY", ""),
+              "watsonxProjectId": os.environ.get("WATSONX_PROJECT_ID", ""),
+              "cohereApiKey": os.environ.get("COHERE_API_KEY", ""),
+              "langsmithApiKey": os.environ.get("LANGSMITH_API_KEY", ""),
+          }
+          with open("/tmp/secret-values.yaml", "w") as f:
+              yaml.dump({"secrets": secrets}, f)
+          PYEOF
+        env:
+          JWT_SECRET_KEY: ${{ secrets.JWT_SECRET_KEY }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          REDIS_URL: ${{ secrets.REDIS_URL }}
+          CELERY_BROKER_URL: ${{ secrets.CELERY_BROKER_URL }}
+          CELERY_RESULT_BACKEND: ${{ secrets.CELERY_RESULT_BACKEND }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          WATSONX_API_KEY: ${{ secrets.WATSONX_API_KEY }}
+          WATSONX_PROJECT_ID: ${{ secrets.WATSONX_PROJECT_ID }}
+          COHERE_API_KEY: ${{ secrets.COHERE_API_KEY }}
+          LANGSMITH_API_KEY: ${{ secrets.LANGSMITH_API_KEY }}
 
       - name: Deploy with Helm
         env:
           REGISTRY: ${{ steps.ecr.outputs.registry }}
         run: |
           helm upgrade --install devtrouble-ai ./deploy/helm/devtrouble-ai \
+            -f /tmp/secret-values.yaml \
             --set image.registry="$REGISTRY" \
-            --set image.tag="${{ github.sha }}" \
+            --set image.backend.tag="${{ github.sha }}" \
+            --set image.frontend.tag="${{ github.sha }}" \
             --wait --timeout 10m
+
+      - name: Clean up temp secret file
+        if: always()
+        run: rm -f /tmp/secret-values.yaml
 
       - name: Show status
         run: |

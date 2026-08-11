@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "devtrouble-ai.fullname" . }}-frontend
+  labels:
+    {{- include "devtrouble-ai.componentLabels" (dict "root" . "component" "frontend") | nindent 4 }}
+spec:
+  type: ClusterIP
+  ports:
+    - port: 80
+      targetPort: http
+      protocol: TCP
+      name: http
+  selector:
+    {{- include "devtrouble-ai.componentSelectorLabels" (dict "root" . "component" "frontend") | nindent 4 }}

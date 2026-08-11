@@ -3,32 +3,36 @@ kind: Deployment
 metadata:
   name: {{ include "devtrouble-ai.fullname" . }}-celery-worker
   labels:
-    {{- include "devtrouble-ai.labels" . | nindent 4 }}
-    app.kubernetes.io/component: celery-worker
+    {{- include "devtrouble-ai.componentLabels" (dict "root" . "component" "celery-worker") | nindent 4 }}
 spec:
-  replicas: {{ .Values.celeryWorker.replicaCount }}
+  replicas: {{ .Values.replicaCount.celeryWorker }}
   selector:
     matchLabels:
-      {{- include "devtrouble-ai.selectorLabels" (dict "component" "celery-worker" "Release" .Release) | nindent 6 }}
+      {{- include "devtrouble-ai.componentSelectorLabels" (dict "root" . "component" "celery-worker") | nindent 6 }}
   template:
     metadata:
       labels:
-        {{- include "devtrouble-ai.selectorLabels" (dict "component" "celery-worker" "Release" .Release) | nindent 8 }}
+        {{- include "devtrouble-ai.componentLabels" (dict "root" . "component" "celery-worker") | nindent 8 }}
     spec:
+      serviceAccountName: {{ include "devtrouble-ai.serviceAccountName" . }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       containers:
         - name: celery-worker
-          image: "{{ .Values.image.registry }}/devtrouble-ai-backend:{{ .Values.image.tag }}"
+          image: {{ include "devtrouble-ai.image" (dict "root" . "repository" .Values.image.backend.repository "tag" .Values.image.backend.tag) }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           command: ["celery", "-A", "app.workers.celery_app", "worker", "--loglevel=info"]
           envFrom:
             - configMapRef:
                 name: {{ include "devtrouble-ai.fullname" . }}-config
             - secretRef:
-                name: {{ .Values.secretName }}
+                name: {{ include "devtrouble-ai.fullname" . }}-secrets
           env:
             # API 파드가 이미 pre-upgrade Job에서 마이그레이션을 실행하므로,
-            # celery-worker까지 중복으로 돌릴 필요가 없다 (docker-compose와 동일한 이유).
+            # celery-worker까지 중복으로 돌릴 필요가 없다.
             - name: RUN_MIGRATIONS
               value: "false"
           resources:
-            {{- toYaml .Values.celeryWorker.resources | nindent 12 }}
+            {{- toYaml .Values.resources.celeryWorker | nindent 12 }}

@@ -19,9 +19,9 @@ spec:
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      # 마이그레이션은 api 컨테이너의 entrypoint.sh가 기동 시 alembic upgrade head를 실행한다
-      # (devtrouble-ai-backend/docker/entrypoint.sh, Dockerfile 참고). 여러 레플리카가 동시에
-      # 올라와도 alembic이 자체적으로 버전 테이블 락을 잡으므로 중복 실행에 안전하다.
+      # 마이그레이션은 migration-job.yaml(pre-upgrade hook)이 딱 한 번만 실행한다.
+      # 레플리카 여러 개가 각자 alembic을 돌리면 배포/재시작 때마다 경쟁 상태가 생길 수
+      # 있어서, 여기서는 RUN_MIGRATIONS=false로 파드 자체의 마이그레이션 실행을 끈다.
       containers:
         - name: api
           image: {{ include "devtrouble-ai.image" (dict "root" . "repository" .Values.image.backend.repository "tag" .Values.image.backend.tag) }}
@@ -34,6 +34,9 @@ spec:
                 name: {{ include "devtrouble-ai.fullname" . }}-config
             - secretRef:
                 name: {{ include "devtrouble-ai.fullname" . }}-secrets
+          env:
+            - name: RUN_MIGRATIONS
+              value: "false"
           livenessProbe:
             httpGet:
               path: {{ .Values.healthCheck.path }}
@@ -45,6 +48,6 @@ spec:
               path: {{ .Values.healthCheck.path }}
               port: http
             initialDelaySeconds: 5
-            periodSeconds: 5
+            periodSeconds: 10
           resources:
             {{- toYaml .Values.resources.api | nindent 12 }}
