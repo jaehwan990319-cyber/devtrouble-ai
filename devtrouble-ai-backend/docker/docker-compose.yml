@@ -1,0 +1,77 @@
+services:
+  api:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    ports:
+      - "8000:8000"
+    env_file:
+      - ../.env
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ../app:/app/app
+    restart: unless-stopped
+
+  celery-worker:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    command: ["celery", "-A", "app.workers.celery_app", "worker", "--loglevel=info"]
+    environment:
+      # api 컨테이너가 이미 마이그레이션을 적용하므로 여기서는 건너뛴다 (중복 실행 방지).
+      RUN_MIGRATIONS: "false"
+    env_file:
+      - ../.env
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  mysql:
+    image: mysql:8.4
+    environment:
+      MYSQL_DATABASE: devtrouble
+      MYSQL_USER: devtrouble
+      MYSQL_PASSWORD: devtrouble
+      MYSQL_ROOT_PASSWORD: root
+    ports:
+      # 호스트에도 그대로 열려있으므로 MySQL Workbench에서 127.0.0.1:3306,
+      # devtrouble/devtrouble(또는 root/root)로 바로 접속할 수 있다.
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-proot"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    ports:
+      - "6333:6333"
+    volumes:
+      - qdrant_data:/qdrant/storage
+    restart: unless-stopped
+
+volumes:
+  mysql_data:
+  qdrant_data:

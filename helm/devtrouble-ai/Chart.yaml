@@ -1,0 +1,14 @@
+apiVersion: v2
+name: devtrouble-ai
+description: DevTrouble AI — 개발자 트러블슈팅 지식 베이스 + RAG 기반 AI 검색 플랫폼 (FastAPI + React + LangGraph)
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
+keywords:
+  - fastapi
+  - react
+  - rag
+  - langgraph
+  - troubleshooting
+maintainers:
+  - name: devtrouble-ai

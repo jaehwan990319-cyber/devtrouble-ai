@@ -1,0 +1,54 @@
+name: Backend CI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "devtrouble-ai-backend/**"
+      - ".github/workflows/backend-ci.yml"
+  pull_request:
+    paths:
+      - "devtrouble-ai-backend/**"
+      - ".github/workflows/backend-ci.yml"
+
+defaults:
+  run:
+    working-directory: devtrouble-ai-backend
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    # 테스트는 SQLite in-memory로 실행되므로(tests/conftest.py) 별도 DB 서비스가 필요 없다.
+    # Settings는 DATABASE_URL 등 필수 환경변수를 요구하므로 CI 전용 더미 값을 채워준다.
+    env:
+      DATABASE_URL: mysql+pymysql://user:pass@localhost/dummy
+      REDIS_URL: redis://localhost:6379/0
+      CELERY_BROKER_URL: redis://localhost:6379/1
+      CELERY_RESULT_BACKEND: redis://localhost:6379/2
+      JWT_SECRET_KEY: ci-test-secret
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: devtrouble-ai-backend/requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Lint (ruff)
+        run: ruff check app tests
+
+      - name: Run tests
+        run: pytest tests/ -v --cov=app --cov-report=term-missing
+
+      - name: Alembic migration smoke test (SQLite)
+        run: |
+          rm -f _ci_migration.db
+          DATABASE_URL=sqlite:///_ci_migration.db alembic upgrade head
+          DATABASE_URL=sqlite:///_ci_migration.db alembic downgrade base
+          rm -f _ci_migration.db

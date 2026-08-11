@@ -1,0 +1,22 @@
+[tool.ruff]
+line-length = 110
+target-version = "py312"
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle
+    "F",   # pyflakes
+    "I",   # isort
+    "B",   # flake8-bugbear
+    "RUF", # ruff 자체 규칙
+]
+ignore = [
+    # Celery 태스크는 어떤 예외든 잡아서 재시도(self.retry)하는 것이 의도된 패턴이다.
+    # (특정 예외만 잡으면 일시적 장애 - DB/네트워크 등 - 를 재시도하지 못하고 태스크가 실패해버린다)
+    "BLE001",
+]
+
+[tool.ruff.lint.flake8-bugbear]
+# FastAPI의 Depends(...)/Query(...)는 인자 기본값에 함수 호출을 쓰는 것이
+# 프레임워크가 의도한 관용구다 (매 요청마다 재평가되지 않고 DI 컨테이너가 관리한다).
+extend-immutable-calls = ["fastapi.Depends", "fastapi.Query", "fastapi.Header"]
