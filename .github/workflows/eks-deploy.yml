@@ -41,7 +41,8 @@ jobs:
         env:
           REGISTRY: ${{ steps.ecr.outputs.registry }}
         run: |
-          docker build -t "$REGISTRY/devtrouble-ai-backend:${{ github.sha }}" \
+          docker build -f ./devtrouble-ai-backend/docker/Dockerfile \
+            -t "$REGISTRY/devtrouble-ai-backend:${{ github.sha }}" \
             -t "$REGISTRY/devtrouble-ai-backend:latest" \
             ./devtrouble-ai-backend
           docker push "$REGISTRY/devtrouble-ai-backend:${{ github.sha }}"
@@ -51,7 +52,8 @@ jobs:
         env:
           REGISTRY: ${{ steps.ecr.outputs.registry }}
         run: |
-          docker build -t "$REGISTRY/devtrouble-ai-frontend:${{ github.sha }}" \
+          docker build -f ./devtrouble-ai-frontend/docker/Dockerfile \
+            -t "$REGISTRY/devtrouble-ai-frontend:${{ github.sha }}" \
             -t "$REGISTRY/devtrouble-ai-frontend:latest" \
             ./devtrouble-ai-frontend
           docker push "$REGISTRY/devtrouble-ai-frontend:${{ github.sha }}"
