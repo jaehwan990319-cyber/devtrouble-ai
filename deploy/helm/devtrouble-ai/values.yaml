@@ -68,7 +68,7 @@ ingress:
 # app/core/config.py의 Settings 필드와 1:1 대응한다. 여기 없는 필드는 pydantic
 # Settings의 기본값을 그대로 쓴다.
 config:
-  ENV: "production"
+  ENV: "prod"
   DEBUG: "false"
   LOG_LEVEL: "INFO"
 
