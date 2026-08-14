@@ -90,6 +90,12 @@ config:
 # 운영에서는 여기 평문으로 커밋하지 말 것. eks-deploy.yml 워크플로가 GitHub Secrets로부터
 # 이 값들을 --set으로 주입한다 (자세한 내용은 deploy/README.md 참고).
 secrets:
+  # true(기본값): 이 chart가 평문 값으로 Secret을 직접 만든다 (기존 GitHub Actions
+  #   --set/-f 방식, 지금까지 쓰던 방식 그대로).
+  # false: 이 chart는 Secret을 만들지 않는다 — 대신 별도의 SealedSecret(암호화되어
+  #   Git에 안전하게 커밋 가능)이 같은 이름의 Secret을 컨트롤러를 통해 만들어준다.
+  #   Argo CD(GitOps) 경로에서 평문 비밀번호를 Git에 올리지 않으려면 false로 둔다.
+  manageSecret: true
   jwtSecretKey: "change-me-in-production"
   databaseUrl: ""
   redisUrl: ""
