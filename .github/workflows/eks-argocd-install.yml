@@ -1,0 +1,64 @@
+name: EKS - Install Argo CD
+
+# 클러스터 생성 후 딱 한 번(또는 values 바뀔 때) 수동 실행. push 트리거 없음.
+on:
+  workflow_dispatch:
+    inputs:
+      cluster_name:
+        description: "EKS 클러스터 이름"
+        required: true
+        default: "devtrouble-ai"
+      region:
+        description: "AWS 리전"
+        required: true
+        default: "ap-northeast-2"
+
+jobs:
+  install-argocd:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ inputs.region }}
+
+      - name: Install kubectl
+        uses: azure/setup-kubectl@v4
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+
+      - name: Update kubeconfig
+        run: aws eks update-kubeconfig --name "${{ inputs.cluster_name }}" --region "${{ inputs.region }}"
+
+      - name: Install Argo CD (via Helm)
+        run: |
+          helm repo add argo https://argoproj.github.io/argo-helm
+          helm repo update
+          helm upgrade --install argocd argo/argo-cd \
+            -n argocd --create-namespace \
+            -f deploy/argocd/values.yaml \
+            --wait --timeout 10m
+
+      - name: Verify
+        run: |
+          kubectl get pods -n argocd
+
+      - name: Summary
+        run: |
+          echo "## Argo CD 설치 완료" >> $GITHUB_STEP_SUMMARY
+          echo "- UI는 ALB로 공개하지 않음 - 아래 명령으로 로컬에서 접근:" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "aws eks update-kubeconfig --name ${{ inputs.cluster_name }} --region ${{ inputs.region }}" >> $GITHUB_STEP_SUMMARY
+          echo "kubectl port-forward svc/argocd-server -n argocd 8080:443" >> $GITHUB_STEP_SUMMARY
+          echo "# https://localhost:8080 접속, 계정 admin" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "- 초기 admin 비밀번호 확인:" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' | base64 -d" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "- 다음 단계: devtrouble-ai Helm chart를 가리키는 Argo CD Application 매니페스트 작성" >> $GITHUB_STEP_SUMMARY

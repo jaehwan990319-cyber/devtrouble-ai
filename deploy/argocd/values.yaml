@@ -1,0 +1,78 @@
+# Argo CD 설치용 values (공식 argo-helm 차트: https://artifacthub.io/packages/helm/argo/argo-cd)
+#
+# 설계 원칙
+# - t3.medium × 2 노드 클러스터에 이미 devtrouble-ai 앱(api 2, frontend 2, celery-worker 1)이
+#   떠 있는 걸 감안해서 모든 컴포넌트 resources를 최소한으로 잡는다.
+# - Argo CD UI/API는 ALB로 공개하지 않는다 (GitOps 컨트롤 플레인은 외부 노출 안 하는 게 정석).
+#   접근은 관리자만 `kubectl port-forward svc/argocd-server -n argocd 8080:443` 로 한다.
+#   나중에 공개 데모용으로 UI를 보여주고 싶어지면 server.ingress 섹션 주석을 풀면 된다.
+# - Dex(SSO), Notifications controller는 이 프로젝트 규모에서 안 쓰므로 꺼서 리소스/공격 표면을 줄인다.
+# - HA(다중 replica, redis-ha)는 학습/포트폴리오 규모에서 과함 -> 전부 단일 replica.
+
+global:
+  # 커스텀 도메인이 없으므로 비워둠 (configs.cm.url도 마찬가지로 비워둠)
+  domain: ""
+
+configs:
+  params:
+    # ALB 뒤에서든 port-forward로든 TLS는 Argo CD 바깥에서 끝내지 않고, 서버가 plaintext로
+    # 서빙하게 한다. (지금은 ALB를 안 쓰지만, 나중에 켜도 이 설정이 맞다 - 우리 앱 ingress도
+    # ACM 인증서 없이 HTTP:80만 열어두는 것과 동일한 기조)
+    server.insecure: true
+
+# --- 핵심 컴포넌트: 전부 단일 replica, 최소 리소스 ---
+
+controller:
+  replicas: 1
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits: { cpu: 500m, memory: 512Mi }
+
+server:
+  replicas: 1
+  resources:
+    requests: { cpu: 50m, memory: 128Mi }
+    limits: { cpu: 200m, memory: 256Mi }
+
+  service:
+    type: ClusterIP   # 외부 노출 안 함 - port-forward로만 접근
+
+  ingress:
+    enabled: false
+    # --- 나중에 공개 데모용으로 켤 때 참고용 (지금은 비활성) ---
+    # enabled: true
+    # ingressClassName: alb
+    # annotations:
+    #   alb.ingress.kubernetes.io/scheme: internet-facing
+    #   alb.ingress.kubernetes.io/target-type: ip
+    #   alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}]'
+    #   # 기존 devtrouble-ai 앱 ALB와 같이 쓰려면 앱 ingress에도 동일한 group.name을 추가해야 함
+    #   # (안 그러면 ALB가 하나 더 생겨서 월 비용이 추가로 든다)
+    #   alb.ingress.kubernetes.io/group.name: devtrouble-ai
+
+repoServer:
+  replicas: 1
+  resources:
+    requests: { cpu: 50m, memory: 128Mi }
+    limits: { cpu: 200m, memory: 256Mi }
+
+applicationSet:
+  enabled: true
+  replicas: 1
+  resources:
+    requests: { cpu: 50m, memory: 128Mi }
+    limits: { cpu: 200m, memory: 256Mi }
+
+redis:
+  resources:
+    requests: { cpu: 50m, memory: 64Mi }
+    limits: { cpu: 200m, memory: 128Mi }
+
+# --- 이 프로젝트 규모에서는 불필요 -> 비활성화 ---
+
+dex:
+  enabled: false          # SSO 안 씀 - admin 계정 로그인으로 충분
+
+notifications:
+  controller:
+    enabled: false        # Slack/Webhook 알림 연동 안 함
