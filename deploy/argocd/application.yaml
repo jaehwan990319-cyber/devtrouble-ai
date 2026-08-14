@@ -1,10 +1,10 @@
 # Argo CD에게 "이 저장소의 deploy/helm/devtrouble-ai를 계속 지켜보고,
 # 클러스터 상태를 거기 맞춰라"고 알려주는 매니페스트.
 #
-# ⚠️ 지금 버전은 GitOps 동기화 메커니즘 자체를 눈으로 확인하기 위한 것이다.
-# 아래 secrets 값은 전부 더미(가짜)다 — 실제 DB/Redis에는 연결되지 않는다.
-# 진짜 배포에 쓰려면 이 파일에 평문 비밀번호를 커밋하는 대신 Sealed Secrets나
-# External Secrets Operator로 바꿔야 한다 (deploy/README.md 참고).
+# secrets.manageSecret: false — 이 Helm chart는 더 이상 평문 Secret을 직접 만들지
+# 않는다. 대신 deploy/argocd/sealed-secret.yaml (kubeseal로 암호화되어 Git에
+# 안전하게 커밋된 SealedSecret)이 sealed-secrets 컨트롤러를 통해 같은 이름
+# (devtrouble-ai-secrets)의 실제 Secret을 만들어준다.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -26,11 +26,7 @@ spec:
           frontend:
             tag: "latest"
         secrets:
-          jwtSecretKey: "argocd-sync-test-placeholder"
-          databaseUrl: "mysql+pymysql://placeholder:placeholder@placeholder-not-real-db:3306/devtrouble"
-          redisUrl: "rediss://placeholder-not-real-redis:6379/0?ssl_cert_reqs=CERT_NONE"
-          celeryBrokerUrl: "rediss://placeholder-not-real-redis:6379/1?ssl_cert_reqs=CERT_NONE"
-          celeryResultBackendUrl: "rediss://placeholder-not-real-redis:6379/2?ssl_cert_reqs=CERT_NONE"
+          manageSecret: false
 
   destination:
     server: https://kubernetes.default.svc
